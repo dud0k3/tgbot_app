@@ -1,0 +1,23 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# node/vite
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# runtime
+bot.db
+bot.db-shm
+bot.db-wal
+backups/
+*.log
+.DS_Store

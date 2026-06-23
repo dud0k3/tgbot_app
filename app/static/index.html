@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#070a0f">
+  <title>JOOT VPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="loader" class="loader"><b>JOOT</b><span></span></div>
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <button class="brand" data-page="home">
+        <i>J</i>
+        <span>JOOT VPN</span>
+      </button>
+      <button id="supportButton" class="ghost">?</button>
+    </header>
+
+    <main>
+      <section id="page-home" class="page active">
+        <div class="hero-card">
+          <div>
+            <p class="eyebrow">PRIVATE ACCESS</p>
+            <h1>JOOT</h1>
+            <span id="heroState" class="state-pill">Проверка</span>
+          </div>
+          <button id="connectButton" class="power-button" aria-label="Подключить VPN">
+            <svg viewBox="0 0 48 48"><path d="M24 6v17"/><path d="M15 13a17 17 0 1 0 18 0"/></svg>
+          </button>
+        </div>
+
+        <div class="status-grid">
+          <article><span>Подписка</span><b id="statusText">—</b></article>
+          <article><span>Устройства</span><b id="devicesText">—</b></article>
+          <article><span>Трафик</span><b id="trafficText">—</b></article>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div><span>ACCESS</span><h2>Одна подписка</h2></div>
+            <small id="daysText">—</small>
+          </div>
+          <p class="panel-copy">Ссылка включает все доступные протоколы. Добавьте её в Happ или Hiddify.</p>
+          <div id="protocolList" class="protocol-list"></div>
+          <div class="actions">
+            <button id="copyButton" class="primary hidden">Скопировать ссылку</button>
+            <button id="refreshButton" class="secondary hidden">Обновить</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="page-profile" class="page">
+        <div class="page-title"><span>ACCOUNT</span><h1>Профиль</h1></div>
+        <article class="profile-card">
+          <div id="avatar" class="avatar">J</div>
+          <div>
+            <span id="profileUsername">—</span>
+            <b id="profileId">ID —</b>
+          </div>
+        </article>
+        <article id="profileSubscription" class="panel profile-sub"></article>
+      </section>
+
+      <section id="page-guide" class="page">
+        <div class="page-title"><span>SETUP</span><h1>Подключение</h1></div>
+        <div class="steps">
+          <article><b>01</b><div><h3>Скопируйте ссылку</h3><p>Нажмите кнопку на главном экране.</p></div></article>
+          <article><b>02</b><div><h3>Откройте Happ</h3><p>Добавьте подписку из буфера обмена.</p></div></article>
+          <article><b>03</b><div><h3>Включите VPN</h3><p>Выберите любой доступный протокол.</p></div></article>
+        </div>
+      </section>
+
+      <section id="page-admin" class="page">
+        <div class="page-title"><span>ADMIN</span><h1>Панель</h1></div>
+        <div id="adminStats" class="status-grid"></div>
+        <div id="adminContent" class="admin-list"></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="active" data-page="home"><i>⌂</i><span>Главная</span></button>
+      <button data-page="profile"><i>○</i><span>Профиль</span></button>
+      <button data-page="guide"><i>?</i><span>Помощь</span></button>
+      <button id="adminNav" class="hidden" data-page="admin"><i>◇</i><span>Admin</span></button>
+    </nav>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
