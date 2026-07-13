@@ -2638,7 +2638,7 @@ async def courier_action(callback: CallbackQuery, bot: Bot):
 class SearchOrder(StatesGroup):
     query = State()
 
-from db import get_delivery_dates, get_delivery_stats, get_deliveries_by_date, mark_order_completed, search_orders_admin
+from db import get_delivery_dates, get_delivery_stats, get_deliveries_by_date, search_orders_admin
 
 
 # ==========================================

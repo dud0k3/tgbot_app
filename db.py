@@ -217,6 +217,11 @@ def init_db():
             pass
 
         try:
+            con.execute("ALTER TABLE orders ADD COLUMN courier_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
             con.execute("ALTER TABLE promocodes ADD COLUMN usage_limit INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
@@ -1913,3 +1918,76 @@ def pay_missing_referral_bonus(order_id: int, referrer_id: int):
             "invited_user_id": invited_user_id,
             "reward": reward,
         }
+
+def get_orders_by_delivery_date(date_str: str):
+    with connect() as con:
+        return con.execute("SELECT * FROM orders WHERE delivery_date = ? AND status != 'cancelled' ORDER BY id DESC", (date_str,)).fetchall()
+
+def update_order_courier(order_id: int, courier_id: int):
+    with connect() as con:
+        con.execute("UPDATE orders SET courier_id = ? WHERE id = ?", (int(courier_id), int(order_id)))
+        con.commit()
+
+def update_order_status(order_id: int, status: str):
+    with connect() as con:
+        con.execute("UPDATE orders SET status = ? WHERE id = ?", (status, int(order_id)))
+        con.commit()
+
+
+def get_delivery_dates(status='confirmed'):
+    with connect() as con:
+        return con.execute('''
+            SELECT delivery_date, COUNT(*) as count 
+            FROM orders 
+            WHERE status = ? 
+              AND delivery_date IS NOT NULL 
+              AND delivery_date != ''
+            GROUP BY delivery_date 
+            ORDER BY delivery_date ASC
+        ''', (status,)).fetchall()
+
+def get_delivery_stats(date_str: str, status='confirmed'):
+    with connect() as con:
+        rows = con.execute('''
+            SELECT delivery_method, COUNT(*) as count, SUM(total) as sum_total
+            FROM orders
+            WHERE status = ? AND delivery_date = ?
+            GROUP BY delivery_method
+        ''', (status, date_str)).fetchall()
+        
+        total_count = sum(r["count"] for r in rows)
+        total_sum = sum(r["sum_total"] or 0 for r in rows)
+        by_method = {r["delivery_method"]: r["count"] for r in rows}
+        
+        return {
+            "total_count": total_count,
+            "total_sum": total_sum,
+            "methods": by_method
+        }
+
+def get_deliveries_by_date(date_str: str, method: str = "all", status='confirmed'):
+    with connect() as con:
+        query = "SELECT * FROM orders WHERE status = ? AND delivery_date = ?"
+        params = [status, date_str]
+        if method != "all":
+            query += " AND delivery_method = ?"
+            params.append(method)
+        query += " ORDER BY id ASC"
+        return con.execute(query, params).fetchall()
+
+
+
+def search_orders_admin(query: str):
+    query = query.strip()
+    with connect() as con:
+        if query.isdigit():
+            return con.execute(
+                "SELECT * FROM orders WHERE id = ? OR phone LIKE ? ORDER BY id DESC LIMIT 20",
+                (int(query), f"%{query}%")
+            ).fetchall()
+        else:
+            query_clean = query.replace("@", "")
+            return con.execute(
+                "SELECT * FROM orders WHERE username LIKE ? ORDER BY id DESC LIMIT 20",
+                (f"%{query_clean}%",)
+            ).fetchall()
