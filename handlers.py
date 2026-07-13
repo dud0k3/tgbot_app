@@ -2336,17 +2336,76 @@ async def delete_product_callback(callback: CallbackQuery):
     await callback.message.edit_text("Товар удалён.")
     await callback.answer()
 
+MONTHS_RU_ALL = {
+    "01": "Январь", "02": "Февраль", "03": "Март", "04": "Апрель",
+    "05": "Май", "06": "Июнь", "07": "Июль", "08": "Август",
+    "09": "Сентябрь", "10": "Октябрь", "11": "Ноябрь", "12": "Декабрь"
+}
+
 @router.message(F.text == "📦 Все заказы")
 async def all_orders(message: Message):
-    if not is_admin_user(message.from_user):
-        return
+    if not is_admin_user(message.from_user): return
 
     dates = list_order_dates()
     if not dates:
         await message.answer("Заказов пока нет.")
         return
 
-    await message.answer("Выберите день:", reply_markup=order_dates_kb())
+    months = {}
+    for d in dates:
+        ym = d['order_date'][:7]
+        months[ym] = months.get(ym, 0) + d['count']
+
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys(), reverse=True):
+        y, m = ym.split("-")
+        kb.button(text=f"📦 {MONTHS_RU_ALL.get(m, m)} {y} | {months[ym]} шт.", callback_data=f"orders_month:{ym}")
+    kb.adjust(1)
+    await message.answer("📦 <b>Выберите месяц:</b>", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "orders_back_to_months")
+async def orders_back_to_months(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    dates = list_order_dates()
+    if not dates:
+        await callback.message.edit_text("Заказов пока нет.")
+        return
+        
+    months = {}
+    for d in dates:
+        ym = d['order_date'][:7]
+        months[ym] = months.get(ym, 0) + d['count']
+
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys(), reverse=True):
+        y, m = ym.split("-")
+        kb.button(text=f"📦 {MONTHS_RU_ALL.get(m, m)} {y} | {months[ym]} шт.", callback_data=f"orders_month:{ym}")
+    kb.adjust(1)
+    await callback.message.edit_text("📦 <b>Выберите месяц:</b>", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("orders_month:"))
+async def view_orders_month(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    ym = callback.data.split(":")[1]
+    
+    dates = list_order_dates()
+    kb = InlineKeyboardBuilder()
+    
+    days_count = 0
+    for d in dates:
+        if d['order_date'].startswith(ym):
+            day = d['order_date'].split("-")[2]
+            kb.button(text=f"{day} числа | {d['count']} шт.", callback_data=f"orders_date:{d['order_date']}")
+            days_count += 1
+            
+    kb.button(text="⬅️ К месяцам", callback_data="orders_back_to_months")
+    
+    # Кнопки дней ставим по 2 в ряд
+    layout = [2] * (days_count // 2) + ([1] if days_count % 2 != 0 else []) + [1]
+    kb.adjust(*layout)
+    
+    y, m = ym.split("-")
+    await callback.message.edit_text(f"📦 <b>Заказы за {MONTHS_RU_ALL.get(m, m)} {y}:</b>", reply_markup=kb.as_markup())
 
 @router.callback_query(F.data.startswith("orders_date:"))
 async def orders_by_date(callback: CallbackQuery):
