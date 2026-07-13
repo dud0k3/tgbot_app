@@ -1981,10 +1981,16 @@ def search_orders_admin(query: str):
     query = query.strip()
     with connect() as con:
         if query.isdigit():
-            return con.execute(
-                "SELECT * FROM orders WHERE id = ? OR phone LIKE ? ORDER BY id DESC LIMIT 20",
-                (int(query), f"%{query}%")
-            ).fetchall()
+            if len(query) <= 5:
+                return con.execute(
+                    "SELECT * FROM orders WHERE id = ? ORDER BY id DESC LIMIT 20",
+                    (int(query),)
+                ).fetchall()
+            else:
+                return con.execute(
+                    "SELECT * FROM orders WHERE phone LIKE ? ORDER BY id DESC LIMIT 20",
+                    (f"%{query}%",)
+                ).fetchall()
         else:
             query_clean = query.replace("@", "")
             return con.execute(
