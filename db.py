@@ -1508,36 +1508,53 @@ def confirm_order(order_id: int):
         }
 
 def cancel_order(order_id: int):
+    import json
     with connect() as con:
         order = con.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
         if not order:
             return False
 
-        if order["status"] == "confirmed":
-            return False
-
         if order["status"] == "cancelled":
             return True
 
-        # Промокод резервируется/списывается только при подтверждении заказа,
-        # поэтому отмена неподтверждённого заказа не уменьшает used_count.
+        # ЕСЛИ ОТМЕНЯЕМ УЖЕ ПОДТВЕРЖДЕННЫЙ ЗАКАЗ -> ВОЗВРАЩАЕМ ТОВАРЫ И АННУЛИРУЕМ НАЧИСЛЕНИЯ
+        if order["status"] == "confirmed":
+            items = con.execute("SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?", (order_id,)).fetchall()
+            for item in items:
+                product = con.execute("SELECT quantity, variant_options FROM products WHERE id = ?", (item["product_id"],)).fetchone()
+                if not product:
+                    continue
+
+                # 1. Возвращаем базовое количество
+                con.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (item["quantity"], item["product_id"]))
+
+                # 2. Возвращаем количество внутри размерной сетки/вариаций
+                if product["variant_options"] and item["variant"]:
+                    try:
+                        variants = json.loads(product["variant_options"])
+                        updated = []
+                        for v in variants:
+                            if isinstance(v, dict) and str(v.get("name")) == str(item["variant"]):
+                                v["stock"] = int(v.get("stock", 0)) + int(item["quantity"])
+                            updated.append(v)
+                        con.execute("UPDATE products SET variant_options = ? WHERE id = ?", (json.dumps(updated, ensure_ascii=False), item["product_id"]))
+                    except Exception:
+                        pass
+            
+            # 3. Аннулируем баллы, которые мы начислили за этот заказ (покупателю и рефералу)
+            earned_txs = con.execute("SELECT id, user_id, amount FROM bonus_transactions WHERE order_id = ? AND type IN ('earned', 'referral')", (order_id,)).fetchall()
+            for tx in earned_txs:
+                already_revoked = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'revoke'", (order_id, tx["user_id"])).fetchone()
+                if not already_revoked:
+                    # Передаем отрицательное значение, чтобы списать эти баллы со счета
+                    add_bonus_transaction(con, tx["user_id"], -tx["amount"], "revoke", order_id, "Аннулирование баллов (отмена заказа)")
+
+        # ВОЗВРАЩАЕМ ПОЛЬЗОВАТЕЛЮ БАЛЛЫ, ПОТРАЧЕННЫЕ ПРИ ОПЛАТЕ
         bonus_used = int(order["bonus_used"] or 0)
-
         if bonus_used > 0:
-            already_refunded = con.execute(
-                "SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'refund'",
-                (order_id, int(order["user_id"]))
-            ).fetchone()
-
+            already_refunded = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'refund'", (order_id, int(order["user_id"]))).fetchone()
             if not already_refunded:
-                add_bonus_transaction(
-                    con,
-                    int(order["user_id"]),
-                    bonus_used,
-                    "refund",
-                    order_id,
-                    "Возврат списанных баллов при отмене заказа"
-                )
+                add_bonus_transaction(con, int(order["user_id"]), bonus_used, "refund", order_id, "Возврат списанных баллов при отмене заказа")
 
         con.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
         con.commit()
