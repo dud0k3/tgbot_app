@@ -1517,7 +1517,7 @@ def cancel_order(order_id: int):
         if order["status"] == "cancelled":
             return True
 
-        # ЕСЛИ ОТМЕНЯЕМ УЖЕ ПОДТВЕРЖДЕННЫЙ ЗАКАЗ -> ВОЗВРАЩАЕМ ТОВАРЫ И АННУЛИРУЕМ НАЧИСЛЕНИЯ
+        # Если заказ УЖЕ БЫЛ ПОДТВЕРЖДЕН -> Откатываем склад и бонусы
         if order["status"] == "confirmed":
             items = con.execute("SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?", (order_id,)).fetchall()
             for item in items:
@@ -1525,10 +1525,10 @@ def cancel_order(order_id: int):
                 if not product:
                     continue
 
-                # 1. Возвращаем базовое количество
+                # 1. Возвращаем общее количество
                 con.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (item["quantity"], item["product_id"]))
 
-                # 2. Возвращаем количество внутри размерной сетки/вариаций
+                # 2. Возвращаем размер/цвет, если он был
                 if product["variant_options"] and item["variant"]:
                     try:
                         variants = json.loads(product["variant_options"])
@@ -1541,21 +1541,24 @@ def cancel_order(order_id: int):
                     except Exception:
                         pass
             
-            # 3. Аннулируем баллы, которые мы начислили за этот заказ (покупателю и рефералу)
+            # 3. Забираем начисленные баллы (кэшбэк и рефералку)
             earned_txs = con.execute("SELECT id, user_id, amount FROM bonus_transactions WHERE order_id = ? AND type IN ('earned', 'referral')", (order_id,)).fetchall()
             for tx in earned_txs:
                 already_revoked = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'revoke'", (order_id, tx["user_id"])).fetchone()
                 if not already_revoked:
-                    # Передаем отрицательное значение, чтобы списать эти баллы со счета
+                    from db import add_bonus_transaction
+                    # Начисляем отрицательное значение для аннулирования
                     add_bonus_transaction(con, tx["user_id"], -tx["amount"], "revoke", order_id, "Аннулирование баллов (отмена заказа)")
 
-        # ВОЗВРАЩАЕМ ПОЛЬЗОВАТЕЛЮ БАЛЛЫ, ПОТРАЧЕННЫЕ ПРИ ОПЛАТЕ
+        # В любом случае: возвращаем клиенту баллы, которые он ПОТРАТИЛ при оформлении
         bonus_used = int(order["bonus_used"] or 0)
         if bonus_used > 0:
             already_refunded = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'refund'", (order_id, int(order["user_id"]))).fetchone()
             if not already_refunded:
-                add_bonus_transaction(con, int(order["user_id"]), bonus_used, "refund", order_id, "Возврат списанных баллов при отмене заказа")
+                from db import add_bonus_transaction
+                add_bonus_transaction(con, int(order["user_id"]), bonus_used, "refund", order_id, "Возврат списанных баллов")
 
+        # Финализируем отмену
         con.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
         con.commit()
         return True
