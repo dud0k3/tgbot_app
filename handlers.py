@@ -2643,20 +2643,56 @@ from db import get_delivery_dates, get_delivery_stats, get_deliveries_by_date, s
 # ДОСТАВКИ И ПОИСК (АДМИН PRO)
 # ==========================================
 
+MONTHS_RU = {
+    "01": "Январь", "02": "Февраль", "03": "Март", "04": "Апрель",
+    "05": "Май", "06": "Июнь", "07": "Июль", "08": "Август",
+    "09": "Сентябрь", "10": "Октябрь", "11": "Ноябрь", "12": "Декабрь"
+}
+
 @router.message(F.text == "📅 Доставки")
 async def deliveries_active(message: Message, state: FSMContext):
     if not is_admin_user(message.from_user): return
     await state.clear()
     dates = get_delivery_dates('confirmed')
     if not dates:
-        await message.answer("Нет доставок (подтвержденных заказов с указанной датой).")
+        await message.answer("Нет доставок.")
         return
-    
-    kb = InlineKeyboardBuilder()
+        
+    months = {}
     for d in dates:
-        kb.button(text=f"📅 {d['delivery_date']} | {d['count']} шт.", callback_data=f"deliv_date:{d['delivery_date']}:all")
+        ym = d['delivery_date'][:7]
+        months[ym] = months.get(ym, 0) + d['count']
+        
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys(), reverse=True):
+        y, m = ym.split("-")
+        kb.button(text=f"📅 {MONTHS_RU.get(m, m)} {y} | {months[ym]} шт.", callback_data=f"deliv_month:{ym}")
     kb.adjust(1)
-    await message.answer("📅 <b>Доставки по датам:</b>", reply_markup=kb.as_markup())
+    await message.answer("📅 <b>Выберите месяц:</b>", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("deliv_month:"))
+async def view_delivery_month(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    ym = callback.data.split(":")[1]
+    
+    dates = get_delivery_dates('confirmed')
+    kb = InlineKeyboardBuilder()
+    
+    days_count = 0
+    for d in dates:
+        if d['delivery_date'].startswith(ym):
+            day = d['delivery_date'].split("-")[2]
+            kb.button(text=f"{day} числа | {d['count']} шт.", callback_data=f"deliv_date:{d['delivery_date']}:all")
+            days_count += 1
+            
+    kb.button(text="⬅️ К месяцам", callback_data="deliv_back:active")
+    
+    # Кнопки дней ставим по 2 в ряд, а кнопку 'Назад' на всю ширину
+    layout = [2] * (days_count // 2) + ([1] if days_count % 2 != 0 else []) + [1]
+    kb.adjust(*layout)
+    
+    y, m = ym.split("-")
+    await callback.message.edit_text(f"📅 <b>Доставки за {MONTHS_RU.get(m, m)} {y}:</b>", reply_markup=kb.as_markup())
 
 @router.callback_query(F.data.startswith("deliv_date:"))
 async def view_delivery_date(callback: CallbackQuery):
@@ -2696,7 +2732,7 @@ async def view_delivery_date(callback: CallbackQuery):
         elif o['delivery_method'] == 'pickup': icon = "🏠"
         kb.button(text=f"{icon} №{o['id']} | {o['total']} ₽", callback_data=f"deliv_order:{o['id']}:{date_str}:{method}")
         
-    kb.button(text="⬅️ Назад к датам", callback_data=f"deliv_back:active")
+    kb.button(text="⬅️ Назад к дням", callback_data=f"deliv_month:{date_str[:7]}")
     
     layout = [2, 2] + [1] * len(orders) + [1]
     kb.adjust(*layout)
@@ -2705,18 +2741,23 @@ async def view_delivery_date(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("deliv_back:"))
 async def deliv_back(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
     dates = get_delivery_dates('confirmed')
-    header = "📅 <b>Доставки по датам:</b>"
-        
     if not dates:
         await callback.message.edit_text("Список пуст.")
         return
         
-    kb = InlineKeyboardBuilder()
+    months = {}
     for d in dates:
-        kb.button(text=f"📅 {d['delivery_date']} | {d['count']} шт.", callback_data=f"deliv_date:{d['delivery_date']}:all")
+        ym = d['delivery_date'][:7]
+        months[ym] = months.get(ym, 0) + d['count']
+        
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys(), reverse=True):
+        y, m = ym.split("-")
+        kb.button(text=f"📅 {MONTHS_RU.get(m, m)} {y} | {months[ym]} шт.", callback_data=f"deliv_month:{ym}")
     kb.adjust(1)
-    await callback.message.edit_text(header, reply_markup=kb.as_markup())
+    await callback.message.edit_text("📅 <b>Выберите месяц:</b>", reply_markup=kb.as_markup())
 
 @router.callback_query(F.data.startswith("deliv_order:"))
 async def view_delivery_order(callback: CallbackQuery):
