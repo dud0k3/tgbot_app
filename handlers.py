@@ -172,6 +172,12 @@ def admin_kb():
     kb.button(text="📊 Статистика")
     kb.button(text="🏬 Склад")
     kb.button(text="🎟 Промокод")
+    kb.button(text="🛠 Редактирование каталога")
+    kb.button(text="⬅️ Назад")
+    return kb.adjust(2, 2, 2, 1, 1).as_markup(resize_keyboard=True)
+
+def edit_catalog_kb():
+    kb = ReplyKeyboardBuilder()
     kb.button(text="➕ Добавить категорию")
     kb.button(text="✏️ Редактировать категорию")
     kb.button(text="🗑 Удалить категорию")
@@ -179,8 +185,8 @@ def admin_kb():
     kb.button(text="✏️ Редактировать товар")
     kb.button(text="✏️ Редактировать варианты")
     kb.button(text="🗑 Удалить товар")
-    kb.button(text="⬅️ Назад")
-    return kb.adjust(2, 2, 2, 3, 2, 2, 1).as_markup(resize_keyboard=True)
+    kb.button(text="⬅️ В админку")
+    return kb.adjust(2, 1, 2, 2, 1).as_markup(resize_keyboard=True)
 
 def categories_kb(prefix: str = "category"):
     kb = InlineKeyboardBuilder()
@@ -1068,6 +1074,16 @@ async def user_orders_by_date(callback: CallbackQuery):
         await callback.message.answer(render_order(order["id"]))
 
     await callback.answer()
+
+@router.message(F.text == "🛠 Редактирование каталога")
+async def edit_catalog_panel(message: Message):
+    if not is_admin_user(message.from_user): return
+    await message.answer("Меню редактирования каталога:", reply_markup=edit_catalog_kb())
+
+@router.message(F.text == "⬅️ В админку")
+async def back_to_admin(message: Message):
+    if not is_admin_user(message.from_user): return
+    await message.answer("Админ-панель:", reply_markup=admin_kb())
 
 @router.message(F.text == "⚙️ Админка")
 async def admin_panel(message: Message):
