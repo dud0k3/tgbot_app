@@ -1,5 +1,6 @@
 import os
 import html
+import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -109,6 +110,10 @@ class OrderComment(StatesGroup):
     phone = State()
     comment = State()
 
+class AssignCourier(StatesGroup):
+    order_id = State()
+    courier_id = State()
+
 def parse_callback_id(data: str):
     try:
         return int(str(data).split(":", 1)[1])
@@ -161,19 +166,21 @@ def main_kb(user):
 
 def admin_kb():
     kb = ReplyKeyboardBuilder()
+    kb.button(text="📅 Доставки")
+    kb.button(text="🔍 Поиск заказа")
+    kb.button(text="📦 Все заказы")
+    kb.button(text="📊 Статистика")
+    kb.button(text="🏬 Склад")
+    kb.button(text="🎟 Промокод")
     kb.button(text="➕ Добавить категорию")
     kb.button(text="✏️ Редактировать категорию")
     kb.button(text="🗑 Удалить категорию")
     kb.button(text="➕ Добавить товар")
     kb.button(text="✏️ Редактировать товар")
     kb.button(text="✏️ Редактировать варианты")
-    kb.button(text="📦 Все заказы")
-    kb.button(text="📊 Статистика")
-    kb.button(text="🏬 Склад")
-    kb.button(text="🎟 Промокод")
     kb.button(text="🗑 Удалить товар")
     kb.button(text="⬅️ Назад")
-    return kb.adjust(2).as_markup(resize_keyboard=True)
+    return kb.adjust(2, 2, 2, 3, 2, 2, 1).as_markup(resize_keyboard=True)
 
 def categories_kb(prefix: str = "category"):
     kb = InlineKeyboardBuilder()
@@ -2458,3 +2465,331 @@ async def any_cancel_order_callback(callback: CallbackQuery):
 @router.callback_query()
 async def debug_unhandled_callback(callback: CallbackQuery):
     await callback.answer(f"Кнопка получена: {callback.data}", show_alert=True)
+
+# ==========================================
+# ДОСТАВКИ И КУРЬЕРЫ
+# ==========================================
+
+@router.message(F.text == "🚚 Доставки по дням")
+async def show_delivery_days(message: Message, state: FSMContext):
+    if not is_admin_user(message.from_user):
+        return
+    await state.clear()
+    
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"Сегодня ({today.strftime('%d.%m')})", callback_data=f"show_del:{today}")
+    kb.button(text=f"Завтра ({tomorrow.strftime('%d.%m')})", callback_data=f"show_del:{tomorrow}")
+    kb.adjust(1)
+    
+    await message.answer("Выберите дату для просмотра доставок:", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("show_del:"))
+async def show_orders_for_day(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user):
+        return
+        
+    date_str = callback.data.split(":")[1]
+    
+    from db import get_orders_by_delivery_date
+    orders = get_orders_by_delivery_date(date_str)
+    
+    if not orders:
+        await callback.message.edit_text(f"На {date_str} нет активных заказов.", reply_markup=InlineKeyboardBuilder().button(text="⬅️ Назад", callback_data="back_to_delivery_days").as_markup())
+        return
+        
+    kb = InlineKeyboardBuilder()
+    for o in orders:
+        courier = f"Курьер: {o['courier_id']}" if o.get("courier_id") else "Без курьера"
+        kb.button(text=f"№{o['id']} | {o['status']} | {courier}", callback_data=f"manage_del:{o['id']}")
+        
+    kb.button(text="⬅️ Назад", callback_data="back_to_delivery_days")
+    kb.adjust(1)
+    
+    await callback.message.edit_text(f"Заказы на {date_str}:", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "back_to_delivery_days")
+async def back_to_delivery_days(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user):
+        return
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"Сегодня ({today.strftime('%d.%m')})", callback_data=f"show_del:{today}")
+    kb.button(text=f"Завтра ({tomorrow.strftime('%d.%m')})", callback_data=f"show_del:{tomorrow}")
+    kb.adjust(1)
+    
+    await callback.message.edit_text("Выберите дату для просмотра доставок:", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("manage_del:"))
+async def manage_delivery_order(callback: CallbackQuery, state: FSMContext):
+    if not is_admin_user(callback.from_user):
+        return
+        
+    order_id = int(callback.data.split(":")[1])
+    text = render_order(order_id)
+    
+    order = get_order(order_id)
+    courier_id = order.get('courier_id')
+    courier_text = f"\n\n🚚 Назначенный курьер: <code>{courier_id}</code>" if courier_id else "\n\n🚚 Курьер НЕ назначен!"
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Назначить курьера", callback_data=f"assign_courier:{order_id}")
+    
+    date_str = order['delivery_date'] if order['delivery_date'] else datetime.date.today().strftime('%Y-%m-%d')
+    kb.button(text="⬅️ К списку", callback_data=f"show_del:{date_str}")
+    kb.adjust(1)
+    
+    await callback.message.edit_text(text + courier_text, reply_markup=kb.as_markup())
+    
+@router.callback_query(F.data.startswith("assign_courier:"))
+async def assign_courier_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin_user(callback.from_user):
+        return
+        
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id)
+    await state.set_state(AssignCourier.courier_id)
+    
+    await callback.message.answer(
+        f"Укажите Telegram ID курьера для заказа №{order_id}.\n"
+        "Убедитесь, что курьер запускал бота (/start)."
+    )
+    await callback.answer()
+
+@router.message(AssignCourier.courier_id)
+async def assign_courier_save(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin_user(message.from_user):
+        return
+        
+    if not message.text.isdigit():
+        await message.answer("ID должен быть числом.")
+        return
+        
+    courier_id = int(message.text)
+    data = await state.get_data()
+    order_id = data['order_id']
+    
+    from db import update_order_courier
+    update_order_courier(order_id, courier_id)
+    
+    await state.clear()
+    await message.answer(f"✅ Курьер {courier_id} назначен на заказ №{order_id}.")
+    
+    order_text = render_order(order_id)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🚗 В пути (к клиенту)", callback_data=f"c_act:delivering:{order_id}")
+    kb.button(text="✅ Доставлен", callback_data=f"c_act:completed:{order_id}")
+    kb.adjust(1)
+    
+    try:
+        await bot.send_message(
+            courier_id, 
+            f"📦 <b>НОВЫЙ ЗАКАЗ!</b>\n\n{order_text}", 
+            reply_markup=kb.as_markup()
+        )
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка отправки курьеру (запускал ли он бота?): {e}")
+
+@router.callback_query(F.data.startswith("c_act:"))
+async def courier_action(callback: CallbackQuery, bot: Bot):
+    _, action, order_id_str = callback.data.split(":")
+    order_id = int(order_id_str)
+    
+    from db import update_order_status
+    order = get_order(order_id)
+    
+    if not order:
+        await callback.answer("Заказ не найден.", show_alert=True)
+        return
+        
+    if order.get('courier_id') != callback.from_user.id and not is_admin_user(callback.from_user):
+        await callback.answer("Вы не курьер этого заказа.", show_alert=True)
+        return
+
+    update_order_status(order_id, action)
+    
+    if action == "delivering":
+        await callback.message.edit_text(callback.message.html_text + "\n\n<b>Статус:</b> 🚗 В пути")
+        await callback.answer("Клиент уведомлен!")
+        try:
+            await bot.send_message(order['user_id'], f"🚚 Ваш заказ №{order_id} передан курьеру и уже в пути!")
+        except:
+            pass
+            
+    elif action == "completed":
+        await callback.message.edit_text(callback.message.html_text + "\n\n<b>Статус:</b> ✅ Доставлен")
+        await callback.answer("Завершено!")
+        try:
+            await bot.send_message(order['user_id'], f"✅ Заказ №{order_id} успешно доставлен. Спасибо!")
+        except:
+            pass
+        from config import ADMINS
+        for admin_id in ADMINS:
+            try:
+                await bot.send_message(admin_id, f"✅ Заказ №{order_id} доставлен курьером <code>{callback.from_user.id}</code>.")
+            except:
+                pass
+
+
+class SearchOrder(StatesGroup):
+    query = State()
+
+from db import get_delivery_dates, get_delivery_stats, get_deliveries_by_date, mark_order_completed, search_orders_admin
+
+
+# ==========================================
+# ДОСТАВКИ И ПОИСК (АДМИН PRO)
+# ==========================================
+
+@router.message(F.text == "📅 Доставки")
+async def deliveries_active(message: Message, state: FSMContext):
+    if not is_admin_user(message.from_user): return
+    await state.clear()
+    dates = get_delivery_dates('confirmed')
+    if not dates:
+        await message.answer("Нет доставок (подтвержденных заказов с указанной датой).")
+        return
+    
+    kb = InlineKeyboardBuilder()
+    for d in dates:
+        kb.button(text=f"📅 {d['delivery_date']} | {d['count']} шт.", callback_data=f"deliv_date:{d['delivery_date']}:all")
+    kb.adjust(1)
+    await message.answer("📅 <b>Доставки по датам:</b>", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("deliv_date:"))
+async def view_delivery_date(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    _, date_str, method = callback.data.split(":")
+    status = 'confirmed'
+    
+    stats = get_delivery_stats(date_str, status)
+    orders = get_deliveries_by_date(date_str, method, status)
+    
+    text = (
+        f"📅 <b>Дата: {date_str}</b>\n\n"
+        f"<b>Всего заказов:</b> {stats['total_count']}\n"
+        f"<b>На сумму:</b> {stats['total_sum']} ₽\n\n"
+        f"<b>По способам получения:</b>\n"
+        f"🚇 По Москве: {stats['methods'].get('moscow', 0)}\n"
+        f"🚆 МЦД-3: {stats['methods'].get('mcd', 0)}\n"
+        f"🏠 Самовывоз: {stats['methods'].get('pickup', 0)}\n"
+        f"❓ Не указано: {stats['methods'].get('', 0) + stats['methods'].get(None, 0)}\n"
+    )
+    
+    kb = InlineKeyboardBuilder()
+    m_all = "✅ Все" if method == "all" else "Все"
+    m_moscow = "✅ По Москве" if method == "moscow" else "По Москве"
+    m_mcd = "✅ МЦД-3" if method == "mcd" else "МЦД-3"
+    m_pickup = "✅ Самовывоз" if method == "pickup" else "Самовывоз"
+    
+    kb.button(text=m_all, callback_data=f"deliv_date:{date_str}:all")
+    kb.button(text=m_moscow, callback_data=f"deliv_date:{date_str}:moscow")
+    kb.button(text=m_mcd, callback_data=f"deliv_date:{date_str}:mcd")
+    kb.button(text=m_pickup, callback_data=f"deliv_date:{date_str}:pickup")
+    
+    for o in orders:
+        icon = "📦"
+        if o['delivery_method'] == 'moscow': icon = "🚇"
+        elif o['delivery_method'] == 'mcd': icon = "🚆"
+        elif o['delivery_method'] == 'pickup': icon = "🏠"
+        kb.button(text=f"{icon} №{o['id']} | {o['total']} ₽", callback_data=f"deliv_order:{o['id']}:{date_str}:{method}")
+        
+    kb.button(text="⬅️ Назад к датам", callback_data=f"deliv_back:active")
+    
+    layout = [2, 2] + [1] * len(orders) + [1]
+    kb.adjust(*layout)
+    
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("deliv_back:"))
+async def deliv_back(callback: CallbackQuery):
+    dates = get_delivery_dates('confirmed')
+    header = "📅 <b>Доставки по датам:</b>"
+        
+    if not dates:
+        await callback.message.edit_text("Список пуст.")
+        return
+        
+    kb = InlineKeyboardBuilder()
+    for d in dates:
+        kb.button(text=f"📅 {d['delivery_date']} | {d['count']} шт.", callback_data=f"deliv_date:{d['delivery_date']}:all")
+    kb.adjust(1)
+    await callback.message.edit_text(header, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("deliv_order:"))
+async def view_delivery_order(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    _, order_id, date_str, method = callback.data.split(":")
+    order_id = int(order_id)
+    
+    order = get_order(order_id)
+    if not order:
+        await callback.answer("Заказ не найден.", show_alert=True)
+        return
+        
+    text = render_order(order_id)
+    kb = InlineKeyboardBuilder()
+    
+    if order['username']:
+        kb.button(text="💬 Написать клиенту", url=f"https://t.me/{order['username'].replace('@', '')}")
+    elif order['phone']:
+        clean_phone = order['phone'].replace('+', '').replace(' ', '').replace('-', '')
+        kb.button(text="💬 Написать (по тел)", url=f"https://t.me/+{clean_phone}")
+        
+    kb.button(text="⬅️ К списку", callback_data=f"deliv_date:{date_str}:{method}")
+    kb.adjust(1)
+    
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+@router.message(F.text == "🔍 Поиск заказа")
+
+async def search_order_start(message: Message, state: FSMContext):
+    if not is_admin_user(message.from_user): return
+    await message.answer("Введите номер заказа, телефон (например, 7999...) или @username:")
+    await state.set_state(SearchOrder.query)
+    
+@router.message(SearchOrder.query)
+async def search_order_execute(message: Message, state: FSMContext):
+    if not is_admin_user(message.from_user): return
+    query = message.text.strip()
+    orders = search_orders_admin(query)
+    
+    if not orders:
+        await message.answer("❌ Заказы не найдены. Попробуйте другой запрос или /cancel.", reply_markup=admin_kb())
+        return
+        
+    await state.clear()
+    
+    if len(orders) == 1:
+        o = orders[0]
+        text = render_order(o['id'])
+        kb = InlineKeyboardBuilder()
+        if o['username']:
+            kb.button(text="💬 Написать клиенту", url=f"https://t.me/{o['username'].replace('@', '')}")
+        await message.answer(f"🔎 <b>Найден 1 заказ:</b>\n\n{text}", reply_markup=kb.as_markup())
+        return
+        
+    text = f"🔎 <b>Найдено {len(orders)} заказов:</b>\nВыберите для просмотра:"
+    kb = InlineKeyboardBuilder()
+    for o in orders:
+        kb.button(text=f"№{o['id']} | {o['status']} | {o['total']} ₽", callback_data=f"search_view:{o['id']}")
+    kb.adjust(1)
+    await message.answer(text, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("search_view:"))
+async def search_view_order(callback: CallbackQuery):
+    if not is_admin_user(callback.from_user): return
+    order_id = int(callback.data.split(":")[1])
+    text = render_order(order_id)
+    order = get_order(order_id)
+    
+    kb = InlineKeyboardBuilder()
+    if order and order['username']:
+        kb.button(text="💬 Написать клиенту", url=f"https://t.me/{order['username'].replace('@', '')}")
+    
+    await callback.message.answer(text, reply_markup=kb.as_markup())
+    await callback.answer()
