@@ -2462,9 +2462,7 @@ async def any_cancel_order_callback(callback: CallbackQuery):
 
     await callback.answer("Заказ отменён")
 
-@router.callback_query()
-async def debug_unhandled_callback(callback: CallbackQuery):
-    await callback.answer(f"Кнопка получена: {callback.data}", show_alert=True)
+
 
 # ==========================================
 # ДОСТАВКИ И КУРЬЕРЫ
