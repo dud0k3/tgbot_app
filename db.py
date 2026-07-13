@@ -1517,18 +1517,16 @@ def cancel_order(order_id: int):
         if order["status"] == "cancelled":
             return True
 
-        # Если заказ УЖЕ БЫЛ ПОДТВЕРЖДЕН -> Откатываем склад и бонусы
         if order["status"] == "confirmed":
+            # 1. Возврат товаров на склад
             items = con.execute("SELECT product_id, quantity, variant FROM order_items WHERE order_id = ?", (order_id,)).fetchall()
             for item in items:
                 product = con.execute("SELECT quantity, variant_options FROM products WHERE id = ?", (item["product_id"],)).fetchone()
                 if not product:
                     continue
 
-                # 1. Возвращаем общее количество
                 con.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (item["quantity"], item["product_id"]))
 
-                # 2. Возвращаем размер/цвет, если он был
                 if product["variant_options"] and item["variant"]:
                     try:
                         variants = json.loads(product["variant_options"])
@@ -1541,24 +1539,34 @@ def cancel_order(order_id: int):
                     except Exception:
                         pass
             
-            # 3. Забираем начисленные баллы (кэшбэк и рефералку)
-            earned_txs = con.execute("SELECT id, user_id, amount FROM bonus_transactions WHERE order_id = ? AND type IN ('earned', 'referral')", (order_id,)).fetchall()
+            # 2. СПИСАНИЕ БАЛЛОВ
+            earned_txs = con.execute("SELECT id, user_id, amount FROM bonus_transactions WHERE order_id = ? AND amount > 0 AND type NOT IN ('refund', 'revoke')", (order_id,)).fetchall()
             for tx in earned_txs:
                 already_revoked = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'revoke'", (order_id, tx["user_id"])).fetchone()
                 if not already_revoked:
-                    from db import add_bonus_transaction
-                    # Начисляем отрицательное значение для аннулирования
-                    add_bonus_transaction(con, tx["user_id"], -tx["amount"], "revoke", order_id, "Аннулирование баллов (отмена заказа)")
+                    try:
+                        from db import add_bonus_transaction
+                        add_bonus_transaction(con, tx["user_id"], -tx["amount"], "revoke", order_id, "Аннулирование баллов (отмена заказа)")
+                    except Exception:
+                        con.execute("INSERT INTO bonus_transactions (user_id, amount, type, order_id, description) VALUES (?, ?, 'revoke', ?, 'Аннулирование баллов')", (tx["user_id"], -tx["amount"], order_id))
+                        for col in ['balance', 'bonus_balance', 'bonuses', 'bonus']:
+                            try: con.execute(f"UPDATE users SET {col} = MAX({col} - ?, 0) WHERE user_id = ?", (tx["amount"], tx["user_id"]))
+                            except: pass
 
-        # В любом случае: возвращаем клиенту баллы, которые он ПОТРАТИЛ при оформлении
+        # 3. ВОЗВРАТ ПОТРАЧЕННЫХ БАЛЛОВ
         bonus_used = int(order["bonus_used"] or 0)
         if bonus_used > 0:
             already_refunded = con.execute("SELECT id FROM bonus_transactions WHERE order_id = ? AND user_id = ? AND type = 'refund'", (order_id, int(order["user_id"]))).fetchone()
             if not already_refunded:
-                from db import add_bonus_transaction
-                add_bonus_transaction(con, int(order["user_id"]), bonus_used, "refund", order_id, "Возврат списанных баллов")
+                try:
+                    from db import add_bonus_transaction
+                    add_bonus_transaction(con, int(order["user_id"]), bonus_used, "refund", order_id, "Возврат списанных баллов")
+                except Exception:
+                    con.execute("INSERT INTO bonus_transactions (user_id, amount, type, order_id, description) VALUES (?, ?, 'refund', ?, 'Возврат списанных баллов')", (int(order["user_id"]), bonus_used, order_id))
+                    for col in ['balance', 'bonus_balance', 'bonuses', 'bonus']:
+                        try: con.execute(f"UPDATE users SET {col} = {col} + ? WHERE user_id = ?", (bonus_used, int(order["user_id"])))
+                        except: pass
 
-        # Финализируем отмену
         con.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
         con.commit()
         return True
