@@ -34,7 +34,7 @@ ADMINS = [int(x.strip()) for x in env_value("ADMINS", "").replace(";", ",").spli
 ORDER_GROUP_ID = int(env_value("ORDER_GROUP_ID", "0") or "0")
 ADMIN_USERNAMES = {
     x.strip().lower().lstrip("@")
-    for x in env_value("ADMIN_USERNAMES", "dud0k3,dogaev2007").replace(";", ",").split(",")
+    for x in env_value("ADMIN_USERNAMES", "").replace(";", ",").split(",")
     if x.strip()
 }
 _db_path_from_env = env_value("DB_PATH", "")
